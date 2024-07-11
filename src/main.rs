@@ -1,7 +1,9 @@
 #![allow(unused, non_snake_case, non_upper_case_globals)]
 
+use std::ops::Deref;
+
 pub use anyhow::Result as AResult;
-use bevy::{color::palettes::css, prelude::*, render::{camera::RenderTarget, render_resource::{Extent3d, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages}, texture::BevyDefault}, window::{PrimaryWindow, WindowResolution}};
+use bevy::{color::palettes::css, input::mouse::{MouseMotion, MouseWheel}, math::vec2, prelude::*, render::{camera::RenderTarget, render_resource::{Extent3d, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages}, texture::BevyDefault}, window::{PrimaryWindow, WindowResolution}, winit::WinitSettings};
 use bevy_egui::{egui::{self, load::SizedTexture, ImageSource, TextureId}, EguiContexts, EguiPlugin};
 
 fn main() -> AppExit {
@@ -23,6 +25,8 @@ fn main() -> AppExit {
 	app.add_systems(Update, (
 		close_on_esc,
 		main_ui,
+		camera_controller_2d,
+		camera_controller_3d,
 	));
 
 	app.insert_resource(SelectedTab(Tab::D2));
@@ -110,8 +114,8 @@ fn setup(
 		},
 		..default()
 	}).id();
-	cmd.spawn((TargetCamera(camera2d), ImageBundle {
-		image: UiImage::new(assets.load("test.png")),
+	cmd.spawn((TargetCamera(camera2d), SpriteBundle {
+		texture: assets.load("test.png"),
 		..default()
 	}));
 
@@ -120,7 +124,12 @@ fn setup(
 			target: RenderTarget::Image(viewport3d.bevyImage.clone()),
 			..default()
 		},
-		transform: Transform::from_xyz(-2.5, 1.0, 2.5).looking_at(Vec3::ZERO, Vec3::Y),
+		transform: Transform::from_xyz(-2.5, 2.5, -2.5).looking_at(Vec3::ZERO, Vec3::Y),
+		..default()
+	});
+	cmd.insert_resource(CameraControllerSettings {
+		initialAngles: vec2(225.0, -35.0),
+		baseSpeed: 10.0,
 		..default()
 	});
 	cmd.spawn(DirectionalLightBundle {
@@ -207,4 +216,149 @@ fn update_viewport_size(
 	viewport2d.resize(size);
 	let viewport3d = images.get_mut(&viewport3d.bevyImage).unwrap();
 	viewport3d.resize(size);
+}
+
+fn camera_controller_2d(
+	mut camera: Query<&mut Transform, With<Camera2d>>,
+	time: Res<Time>,
+	keyboard: Res<ButtonInput<KeyCode>>,
+	mouseButtons: Res<ButtonInput<MouseButton>>,
+	selectedTab: Res<SelectedTab>,
+	mut mouseMotion: EventReader<MouseMotion>,
+	mut mouseScroll: EventReader<MouseWheel>,
+	mut zoom: Local<f32>,
+) {
+	if selectedTab.0 != Tab::D2 {
+		return;
+	}
+
+	let mut cameraTransform = camera.single_mut();
+
+	if keyboard.just_pressed(KeyCode::Space) {
+		cameraTransform.translation = Vec3::ZERO;
+	}
+
+	if mouseButtons.pressed(MouseButton::Left) {
+		let mut motion = Vec2::ZERO;
+		for event in mouseMotion.read() {
+			motion += event.delta;
+		}
+		motion.x *= -1.0;
+		cameraTransform.translation += Vec3::from((motion, 0.0));
+	} else {
+		mouseMotion.clear();
+	}
+
+	let mut zoomDelta = 0.0;
+	for event in mouseScroll.read() {
+		zoomDelta -= event.y;
+	}
+	*zoom += zoomDelta * 0.1;
+	*zoom = zoom.clamp(0.1, 4.0);
+	if zoomDelta != 0.0 {
+		cameraTransform.scale = Vec3::splat(*zoom);
+	}
+}
+
+#[derive(Resource, Clone, Copy, Debug)]
+struct CameraControllerSettings {
+	pub initialAngles: Vec2,
+	pub mouseSensitivity: f32,
+	pub baseSpeed: f32,
+}
+
+impl Default for CameraControllerSettings {
+	fn default() -> Self {
+		Self {
+			initialAngles: default(),
+			mouseSensitivity: 0.25,
+			baseSpeed: 1.0,
+		}
+	}
+}
+
+fn camera_controller_3d(
+	mut camera: Query<&mut Transform, With<Camera3d>>,
+	time: Res<Time>,
+	keyboard: Res<ButtonInput<KeyCode>>,
+	mouseButtons: Res<ButtonInput<MouseButton>>,
+	settings: Option<Res<CameraControllerSettings>>,
+	selectedTab: Res<SelectedTab>,
+	mut mouseMotion: EventReader<MouseMotion>,
+	mut angles: Local<Vec2>,
+	mut initialized: Local<bool>,
+) {
+	if selectedTab.0 != Tab::D3 {
+		return;
+	}
+
+	let defaultSettings;
+	let settings = match settings {
+		Some(ref res) => res.deref(),
+		None => {
+			defaultSettings = default();
+			&defaultSettings
+		}
+	};
+
+	if !*initialized {
+		*initialized = true;
+		*angles = settings.initialAngles;
+	}
+
+	if mouseButtons.pressed(MouseButton::Left) {
+		let mut motion = Vec2::ZERO;
+		for ev in mouseMotion.read() {
+			motion += -ev.delta * settings.mouseSensitivity;
+		}
+		*angles += motion;
+		angles.y = angles.y.clamp(-89.9, 89.9);
+	} else {
+		mouseMotion.clear();
+	}
+
+	let mut velocity = Vec3::ZERO;
+	if keyboard.pressed(KeyCode::KeyW) {
+		velocity.z += 1.0;
+	}
+	if keyboard.pressed(KeyCode::KeyS) {
+		velocity.z -= 1.0;
+	}
+	if keyboard.pressed(KeyCode::KeyD) {
+		velocity.x += 1.0;
+	}
+	if keyboard.pressed(KeyCode::KeyA) {
+		velocity.x -= 1.0;
+	}
+	if keyboard.pressed(KeyCode::KeyQ) {
+		velocity.y += 1.0;
+	}
+	if keyboard.pressed(KeyCode::KeyZ) {
+		velocity.y -= 1.0;
+	}
+
+	let mut transform = camera.single_mut();
+	transform.rotation =
+		Quat::from_rotation_y(angles.x.to_radians()) * Quat::from_rotation_x(angles.y.to_radians());
+	let forward = transform
+		.forward()
+		.reject_from_normalized(Vec3::Y)
+		.normalize();
+	let right = transform
+		.right()
+		.reject_from_normalized(Vec3::Y)
+		.normalize();
+	let up = Vec3::Y;
+	let speed = settings.baseSpeed * if keyboard.pressed(KeyCode::ShiftLeft) {
+		2.0
+	} else if keyboard.pressed(KeyCode::AltLeft) {
+		4.0
+	} else if keyboard.pressed(KeyCode::ControlLeft) {
+		0.5
+	} else {
+		1.0
+	};
+	transform.translation += (forward * velocity.z + right * velocity.x + up * velocity.y)
+		.normalize_or_zero() *
+		speed * time.delta_seconds();
 }
