@@ -191,7 +191,13 @@ fn update_viewport_size(
 	viewport2d: Res<Viewport2D>,
 	viewport3d: Res<Viewport3D>,
 	mut images: ResMut<Assets<Image>>,
+	mut lastSize: Local<UVec2>,
 ) {
+	if viewportSize.0 == *lastSize {
+		return;
+	}
+	*lastSize = viewportSize.0;
+
 	let size = Extent3d {
 		width: viewportSize.0.x,
 		height: viewportSize.0.y,
