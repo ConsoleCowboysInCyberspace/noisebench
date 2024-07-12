@@ -227,9 +227,15 @@ fn camera_controller_2d(
 	mut mouseMotion: EventReader<MouseMotion>,
 	mut mouseScroll: EventReader<MouseWheel>,
 	mut zoom: Local<f32>,
+	mut init: Local<bool>,
 ) {
 	if selectedTab.0 != Tab::D2 {
 		return;
+	}
+
+	if !*init {
+		*init = true;
+		*zoom = 1.0;
 	}
 
 	let mut cameraTransform = camera.single_mut();
@@ -244,6 +250,7 @@ fn camera_controller_2d(
 			motion += event.delta;
 		}
 		motion.x *= -1.0;
+		motion *= *zoom;
 		cameraTransform.translation += Vec3::from((motion, 0.0));
 	} else {
 		mouseMotion.clear();
