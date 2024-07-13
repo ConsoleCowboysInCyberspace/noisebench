@@ -13,4 +13,5 @@ opt-level = 3
 anyhow = "1.0.86"
 bevy = "0.14.0"
 bevy_egui = "0.28.0"
+bytemuck = "1.16.1"
 opensimplex2 = "1.1.0"

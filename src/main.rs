@@ -3,7 +3,7 @@
 use std::ops::Deref;
 
 pub use anyhow::Result as AResult;
-use bevy::{color::palettes::css, input::mouse::{MouseMotion, MouseWheel}, math::vec2, prelude::*, render::{camera::RenderTarget, render_resource::{Extent3d, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages}, texture::BevyDefault}, window::{PrimaryWindow, WindowResolution}, winit::WinitSettings};
+use bevy::{color::palettes::css, input::mouse::{MouseMotion, MouseWheel}, math::vec2, prelude::*, render::{camera::RenderTarget, render_asset::RenderAssetUsages, render_resource::{Extent3d, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages}, texture::BevyDefault}, tasks::{block_on, futures_lite::future, AsyncComputeTaskPool, Task}, window::{PrimaryWindow, WindowResolution}, winit::WinitSettings};
 use bevy_egui::{egui::{self, load::SizedTexture, ImageSource, TextureId}, EguiContexts, EguiPlugin};
 
 fn main() -> AppExit {
@@ -27,7 +27,11 @@ fn main() -> AppExit {
 		main_ui,
 		camera_controller_2d,
 		camera_controller_3d,
+		generate_noise,
+		update_noise_outputs,
 	));
+
+	app.add_event::<NoiseGenRequest>();
 
 	app.insert_resource(SelectedTab(Tab::D2));
 	app.insert_resource(ViewportSize(UVec2::ONE));
@@ -98,15 +102,30 @@ struct Viewport3D {
 	eguiImage: TextureId,
 }
 
+#[derive(Resource)]
+struct NoiseImage(Handle<Image>);
+
 fn setup(
 	mut cmd: Commands,
+	mut eguiCtx: EguiContexts,
 	assets: Res<AssetServer>,
+	mut images: ResMut<Assets<Image>>,
 	mut materials: ResMut<Assets<StandardMaterial>>,
 	mut meshes: ResMut<Assets<Mesh>>,
 	mut viewport2d: ResMut<Viewport2D>,
 	mut viewport3d: ResMut<Viewport3D>,
-	mut eguiCtx: EguiContexts,
+	mut noiseGenRequests: EventWriter<NoiseGenRequest>,
 ) {
+	let noiseImage = Image::new_fill(
+		Extent3d { width: 256, height: 256, depth_or_array_layers: 1 },
+		TextureDimension::D2,
+		bytemuck::cast_slice(&[0f32; 4]),
+		TextureFormat::Rgba32Float,
+		default(),
+	);
+	let noiseImage = images.add(noiseImage);
+	cmd.insert_resource(NoiseImage(noiseImage.clone()));
+
 	let camera2d = cmd.spawn(Camera2dBundle {
 		camera: Camera {
 			target: RenderTarget::Image(viewport2d.bevyImage.clone()),
@@ -115,7 +134,7 @@ fn setup(
 		..default()
 	}).id();
 	cmd.spawn((TargetCamera(camera2d), SpriteBundle {
-		texture: assets.load("test.png"),
+		texture: noiseImage,
 		..default()
 	}));
 
@@ -150,6 +169,8 @@ fn setup(
 
 	viewport2d.eguiImage = eguiCtx.add_image(viewport2d.bevyImage.clone_weak());
 	viewport3d.eguiImage = eguiCtx.add_image(viewport3d.bevyImage.clone_weak());
+
+	noiseGenRequests.send(NoiseGenRequest);
 }
 
 fn main_ui(
@@ -368,4 +389,96 @@ fn camera_controller_3d(
 	transform.translation += (forward * velocity.z + right * velocity.x + up * velocity.y)
 		.normalize_or_zero() *
 		speed * time.delta_seconds();
+}
+
+#[derive(Event)]
+struct NoiseGenRequest;
+
+struct NoiseOutput {
+	diameter: usize,
+	samples: Vec<f32>,
+}
+
+impl NoiseOutput {
+	pub fn new(diameter: usize) -> Self {
+		Self {
+			diameter,
+			samples: vec![0.0; diameter.pow(2)],
+		}
+	}
+
+	pub fn rows(&mut self) -> impl '_ + Iterator<Item = (usize, &mut [f32])> {
+		self
+			.samples
+			.chunks_exact_mut(self.diameter)
+			.enumerate()
+	}
+}
+
+#[derive(Component)]
+struct NoiseGenTask(Task<NoiseOutput>);
+
+fn generate_noise(
+	mut cmd: Commands,
+	mut noiseGenRequests: EventReader<NoiseGenRequest>,
+) {
+	let mut requested = false;
+	for ev in noiseGenRequests.read() {
+		info!("request seent");
+		requested = true;
+		break;
+	}
+	noiseGenRequests.clear();
+	if !requested { return; }
+	info!("noise gen requested");
+
+	let threadPool = AsyncComputeTaskPool::get();
+	let task = threadPool.spawn(async {
+		let mut img = NoiseOutput::new(256);
+		let diameter = img.diameter;
+		threadPool.scope(|scope| {
+			img.rows().for_each(|(y, chunk)| {
+				scope.spawn(async move {
+					for (x, v) in chunk.into_iter().enumerate() {
+						let y = y as f64 / (diameter - 1) as f64 * 5.0;
+						let x = x as f64 / (diameter - 1) as f64 * 5.0;
+						*v = opensimplex2::smooth::noise2(100, x, y);
+					}
+				});
+			});
+		});
+		img
+	});
+	cmd.spawn(NoiseGenTask(task));
+}
+
+fn update_noise_outputs(
+	mut cmd: Commands,
+	mut task: Query<(Entity, &mut NoiseGenTask)>,
+	mut images: ResMut<Assets<Image>>,
+	noiseImage: Res<NoiseImage>,
+) {
+	let Ok((taskEnt, mut task)) = task.get_single_mut() else { return };
+	let Some(noiseOutput) = block_on(future::poll_once(&mut task.0)) else { return };
+	cmd.entity(taskEnt).despawn();
+	info!("noise gen done");
+
+	let noiseImage = images.get_mut(&noiseImage.0).unwrap();
+	let diameter = noiseOutput.diameter as _;
+	if diameter != noiseImage.size().x {
+		noiseImage.resize(Extent3d { width: diameter, height: diameter, depth_or_array_layers: 1 });
+	}
+	let data: &mut [[f32; 4]] = bytemuck::cast_slice_mut(&mut noiseImage.data);
+	data.iter_mut().enumerate().for_each(|(i, pixel)| {
+		/* let x = i as f64 % 256.0 * 0.01;
+		let y = i as f64 / 256.0 * 0.01;
+		let mut v = opensimplex2::fast::noise2(100, x, y);
+		v += opensimplex2::fast::noise2(100, x * 2.0, y * 2.0) / 2.0;
+		v += opensimplex2::fast::noise2(100, x * 4.0, y * 4.0) / 4.0;
+		v += opensimplex2::fast::noise2(100, x * 6.0, y * 6.0) / 6.0; */
+		let v = noiseOutput.samples[i];
+		let v = (v + 1.0) / 2.0;
+		(&mut pixel[.. 3]).fill(v);
+		pixel[3] = 1.0;
+	});
 }
