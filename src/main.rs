@@ -641,7 +641,6 @@ fn scripts_changed(
 		selected,
 	} = &mut *luaScripts;
 	while let Ok(ev) = channel.recv_timeout(Duration::ZERO) {
-		info!("got event {ev:?}");
 		match ev.kind {
 			EventKind::Create(CreateKind::File) => {
 				let path = &ev.paths[0];
@@ -753,7 +752,8 @@ fn generate_noise(
 		let ast = match lua::construct_noisegen(&code) {
 			Ok(ast) => ast,
 			Err(err) => {
-				eprintln!("Lua error: {err:#?}");
+				let err: mlua::Error = err.downcast().unwrap();
+				error!("Lua error: {err}");
 				return img;
 			},
 		};
