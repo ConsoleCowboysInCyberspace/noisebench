@@ -2,13 +2,45 @@
 
 mod lua;
 
-use std::{borrow::Borrow, ops::Deref, path::{Path, PathBuf}, sync::{Arc, OnceLock, RwLock}, time::Duration};
+use std::borrow::Borrow;
+use std::ops::Deref;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, OnceLock, RwLock};
+use std::time::Duration;
 
 pub use anyhow::Result as AResult;
-use bevy::{asset::{io::AssetSourceEvent, AssetLoader, AsyncReadExt, LoadedFolder}, color::palettes::css, core_pipeline::Skybox, input::mouse::{MouseMotion, MouseWheel}, math::{dvec2, vec2, vec3}, pbr::DirectionalLightShadowMap, prelude::*, render::{camera::RenderTarget, mesh::PrimitiveTopology, render_asset::RenderAssetUsages, render_resource::{Extent3d, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages, TextureViewDescriptor, TextureViewDimension}, texture::BevyDefault}, tasks::{block_on, futures_lite::future, AsyncComputeTaskPool, Task}, utils::{HashMap, HashSet}, window::{PrimaryWindow, WindowResolution}, winit::WinitSettings};
-use bevy_egui::{egui::{self, load::SizedTexture, ImageSource, TextureId}, EguiContexts, EguiPlugin};
+use bevy::asset::io::AssetSourceEvent;
+use bevy::asset::{AssetLoader, AsyncReadExt, LoadedFolder};
+use bevy::color::palettes::css;
+use bevy::core_pipeline::Skybox;
+use bevy::input::mouse::{MouseMotion, MouseWheel};
+use bevy::math::{dvec2, vec2, vec3};
+use bevy::pbr::DirectionalLightShadowMap;
+use bevy::prelude::*;
+use bevy::render::camera::RenderTarget;
+use bevy::render::mesh::PrimitiveTopology;
+use bevy::render::render_asset::RenderAssetUsages;
+use bevy::render::render_resource::{
+	Extent3d,
+	TextureDescriptor,
+	TextureDimension,
+	TextureFormat,
+	TextureUsages,
+	TextureViewDescriptor,
+	TextureViewDimension,
+};
+use bevy::render::texture::BevyDefault;
+use bevy::tasks::futures_lite::future;
+use bevy::tasks::{block_on, AsyncComputeTaskPool, Task};
+use bevy::utils::{HashMap, HashSet};
+use bevy::window::{PrimaryWindow, WindowResolution};
+use bevy::winit::WinitSettings;
+use bevy_egui::egui::load::SizedTexture;
+use bevy_egui::egui::{self, ImageSource, TextureId};
+use bevy_egui::{EguiContexts, EguiPlugin};
 use crossbeam_channel::Receiver;
-use notify::{event::{CreateKind, ModifyKind, RemoveKind, RenameMode}, EventKind, RecursiveMode, Watcher};
+use notify::event::{CreateKind, ModifyKind, RemoveKind, RenameMode};
+use notify::{EventKind, RecursiveMode, Watcher};
 
 const skyboxTexture: &'static str = "skybox/clouds.jpg";
 
@@ -31,18 +63,21 @@ fn main() -> AppExit {
 
 	app.add_systems(Startup, setup);
 	app.add_systems(PreUpdate, update_viewport_size);
-	app.add_systems(Update, (
-		close_on_esc,
-		axes_gizmo,
-		setup_cubemap,
-		wef,
-		main_ui,
-		camera_controller_2d,
-		camera_controller_3d,
-		scripts_changed,
-		generate_noise,
-		update_noise_outputs,
-	));
+	app.add_systems(
+		Update,
+		(
+			close_on_esc,
+			axes_gizmo,
+			setup_cubemap,
+			wef,
+			main_ui,
+			camera_controller_2d,
+			camera_controller_3d,
+			scripts_changed,
+			generate_noise,
+			update_noise_outputs,
+		),
+	);
 
 	app.insert_resource(SelectedTab(Tab::D2));
 	app.insert_resource(ViewportSize(UVec2::ONE));
@@ -51,7 +86,11 @@ fn main() -> AppExit {
 	let defaultImage = Image {
 		texture_descriptor: TextureDescriptor {
 			label: None,
-			size: Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+			size: Extent3d {
+				width: 1,
+				height: 1,
+				depth_or_array_layers: 1,
+			},
 			dimension: TextureDimension::D2,
 			format: TextureFormat::bevy_default(),
 			mip_level_count: 1,
@@ -77,18 +116,23 @@ fn main() -> AppExit {
 	app.insert_resource(viewport3d);
 
 	let (sender, receiver) = crossbeam_channel::unbounded();
-	let mut watcher = notify::recommended_watcher(move |res| {
-		match res {
-			Ok(event) => { sender.send(event); },
-			Err(err) => error!("filesystem watcher error: {err:?}"),
-		}
-	}).unwrap();
-	watcher.watch(Path::new("assets/scripts"), RecursiveMode::Recursive).unwrap();
+	let mut watcher = notify::recommended_watcher(move |res| match res {
+		Ok(event) => {
+			sender.send(event);
+		},
+		Err(err) => error!("filesystem watcher error: {err:?}"),
+	})
+	.unwrap();
+	watcher
+		.watch(Path::new("assets/scripts"), RecursiveMode::Recursive)
+		.unwrap();
 	let mut scripts = HashMap::new();
 	for file in std::fs::read_dir("assets/scripts").unwrap() {
 		let file = file.unwrap();
 		let ty = file.file_type().unwrap();
-		if !ty.is_file() { continue; }
+		if !ty.is_file() {
+			continue;
+		}
 
 		let path = file.path();
 		let path = InternedPath::new(path);
@@ -104,10 +148,7 @@ fn main() -> AppExit {
 	app.run()
 }
 
-fn close_on_esc(
-	keyboard: Res<ButtonInput<KeyCode>>,
-	mut exit: EventWriter<AppExit>,
-) {
+fn close_on_esc(keyboard: Res<ButtonInput<KeyCode>>, mut exit: EventWriter<AppExit>) {
 	if keyboard.just_pressed(KeyCode::Escape) {
 		exit.send(AppExit::Success);
 	}
@@ -166,7 +207,11 @@ fn setup(
 	mut noiseGenRequests: EventWriter<NoiseGenRequest>,
 ) {
 	let noiseImage = Image::new_fill(
-		Extent3d { width: 256, height: 256, depth_or_array_layers: 1 },
+		Extent3d {
+			width: 256,
+			height: 256,
+			depth_or_array_layers: 1,
+		},
 		TextureDimension::D2,
 		bytemuck::cast_slice(&[0f32; 4]),
 		TextureFormat::Rgba32Float,
@@ -175,63 +220,72 @@ fn setup(
 	let noiseImage = images.add(noiseImage);
 	cmd.insert_resource(NoiseImage(noiseImage.clone()));
 
-	let camera2d = cmd.spawn(Camera2dBundle {
-		camera: Camera {
-			target: RenderTarget::Image(viewport2d.bevyImage.clone()),
+	let camera2d = cmd
+		.spawn(Camera2dBundle {
+			camera: Camera {
+				target: RenderTarget::Image(viewport2d.bevyImage.clone()),
+				..default()
+			},
+			..default()
+		})
+		.id();
+	cmd.spawn((
+		TargetCamera(camera2d),
+		SpriteBundle {
+			texture: noiseImage,
 			..default()
 		},
-		..default()
-	}).id();
-	cmd.spawn((TargetCamera(camera2d), SpriteBundle {
-		texture: noiseImage,
-		..default()
-	}));
+	));
 
-	cmd.spawn((Camera3dBundle {
-		camera: Camera {
-			target: RenderTarget::Image(viewport3d.bevyImage.clone()),
+	cmd.spawn((
+		Camera3dBundle {
+			camera: Camera {
+				target: RenderTarget::Image(viewport3d.bevyImage.clone()),
+				..default()
+			},
+			transform: Transform::from_xyz(-2.5, 2.5, -2.5).looking_at(Vec3::ZERO, Vec3::Y),
 			..default()
 		},
-		transform: Transform::from_xyz(-2.5, 2.5, -2.5).looking_at(Vec3::ZERO, Vec3::Y),
-		..default()
-	},
-	Skybox {
-		image: assets.load(skyboxTexture),
-		brightness: 1000.0,
-	}));
+		Skybox {
+			image: assets.load(skyboxTexture),
+			brightness: 1000.0,
+		},
+	));
 	cmd.insert_resource(CameraControllerSettings {
 		initialAngles: vec2(225.0, -35.0),
 		baseSpeed: 10.0,
 		..default()
 	});
 	cmd.spawn(DirectionalLightBundle {
-		transform: Transform::IDENTITY.looking_at(-vec3(-0.8035929, 0.39474383, -0.44543877), Vec3::Y),
+		transform: Transform::IDENTITY
+			.looking_at(-vec3(-0.8035929, 0.39474383, -0.44543877), Vec3::Y),
 		directional_light: DirectionalLight {
 			shadows_enabled: true,
 			..default()
 		},
 		..default()
 	});
-	cmd.insert_resource(DirectionalLightShadowMap {
-		size: 8192,
-	});
+	cmd.insert_resource(DirectionalLightShadowMap { size: 8192 });
 
 	let mesh = meshes.add(Cuboid::from_size(Vec3::ONE));
 	let material = materials.add(StandardMaterial {
 		base_color_texture: Some(assets.load("test.png")),
 		..default()
 	});
-	cmd.spawn((DbgCube, PbrBundle {
-		mesh,
-		material,
-		transform: Transform::from_xyz(0.0, 0.5, 0.0),
-		..default()
-	}));
+	cmd.spawn((
+		DbgCube,
+		PbrBundle {
+			mesh,
+			material,
+			transform: Transform::from_xyz(0.0, 0.5, 0.0),
+			..default()
+		},
+	));
 
 	// water
 	let mesh = meshes.add(Rectangle::new(2f32.powi(14), 2f32.powi(14)));
 	let material = materials.add(StandardMaterial {
-		base_color: Color::srgba_u8(0x11, 0x7f, 0xd5, 0x7f),
+		base_color: Color::srgba_u8(0x11, 0x7F, 0xD5, 0x7F),
 		alpha_mode: AlphaMode::Blend,
 		..default()
 	});
@@ -255,7 +309,9 @@ fn setup_cubemap(
 		return;
 	}
 
-	let Some(handle) = assets.get_handle(skyboxTexture) else { return };
+	let Some(handle) = assets.get_handle(skyboxTexture) else {
+		return;
+	};
 	if !assets.is_loaded_with_dependencies(handle.id()) {
 		return;
 	}
@@ -272,10 +328,7 @@ fn setup_cubemap(
 #[derive(Component)]
 struct DbgCube;
 
-fn wef(
-	mut query: Query<&mut Transform, With<DbgCube>>,
-	time: Res<Time>,
-) {
+fn wef(mut query: Query<&mut Transform, With<DbgCube>>, time: Res<Time>) {
 	let mut t = query.single_mut();
 	let (x, y) = time.elapsed_seconds().sin_cos();
 	let pos = vec3(x, 0.5, y);
@@ -300,7 +353,9 @@ fn main_ui(
 
 			ui.add_space(50.0);
 
-			let LuaScripts { scripts, selected, .. } = &mut *luaScripts;
+			let LuaScripts {
+				scripts, selected, ..
+			} = &mut *luaScripts;
 			egui::ComboBox::from_id_source("script")
 				.selected_text(match selected {
 					None => "",
@@ -444,7 +499,7 @@ fn camera_controller_3d(
 		None => {
 			defaultSettings = default();
 			&defaultSettings
-		}
+		},
 	};
 
 	if !*initialized {
@@ -495,15 +550,16 @@ fn camera_controller_3d(
 		.reject_from_normalized(Vec3::Y)
 		.normalize();
 	let up = Vec3::Y;
-	let speed = settings.baseSpeed * if keyboard.pressed(KeyCode::ShiftLeft) {
-		2.0
-	} else if keyboard.pressed(KeyCode::AltLeft) {
-		4.0
-	} else if keyboard.pressed(KeyCode::ControlLeft) {
-		0.5
-	} else {
-		1.0
-	};
+	let speed = settings.baseSpeed *
+		if keyboard.pressed(KeyCode::ShiftLeft) {
+			2.0
+		} else if keyboard.pressed(KeyCode::AltLeft) {
+			4.0
+		} else if keyboard.pressed(KeyCode::ControlLeft) {
+			0.5
+		} else {
+			1.0
+		};
 	transform.translation += (forward * velocity.z + right * velocity.x + up * velocity.y)
 		.normalize_or_zero() *
 		speed * time.delta_seconds();
@@ -539,10 +595,7 @@ impl InternedPath {
 		let mut write = interned.write().unwrap();
 		let display = path.file_name().unwrap().to_str().unwrap();
 		let display = format!("{display}");
-		let ipath = Self(Arc::new(InternedPathInner {
-			path,
-			display
-		}));
+		let ipath = Self(Arc::new(InternedPathInner { path, display }));
 		write.insert(ipath.clone());
 		ipath
 	}
@@ -582,7 +635,11 @@ fn scripts_changed(
 		std::fs::read_to_string(path).unwrap()
 	}
 
-	let LuaScripts { channel, scripts, selected } = &mut *luaScripts;
+	let LuaScripts {
+		channel,
+		scripts,
+		selected,
+	} = &mut *luaScripts;
 	while let Ok(ev) = channel.recv_timeout(Duration::ZERO) {
 		info!("got event {ev:?}");
 		match ev.kind {
@@ -605,22 +662,22 @@ fn scripts_changed(
 					noiseGenRequests.send(NoiseGenRequest);
 				}
 			},
-			EventKind::Modify(ModifyKind::Name(kind)) => {
-				match kind {
-					RenameMode::To => {
-						let path = &ev.paths[0];
-						scripts.insert(InternedPath::new(path.clone()), read_script(path));
-					},
-					RenameMode::From => {
-						let path = &ev.paths[0];
-						scripts.remove(path);
-					},
-					RenameMode::Both => {
-						let from = &ev.paths[0];
-						let to = &ev.paths[0];
-					},
-					RenameMode::Other | RenameMode::Any => panic!("detected script modification of unknown kind"),
-				}
+			EventKind::Modify(ModifyKind::Name(kind)) => match kind {
+				RenameMode::To => {
+					let path = &ev.paths[0];
+					scripts.insert(InternedPath::new(path.clone()), read_script(path));
+				},
+				RenameMode::From => {
+					let path = &ev.paths[0];
+					scripts.remove(path);
+				},
+				RenameMode::Both => {
+					let from = &ev.paths[0];
+					let to = &ev.paths[0];
+				},
+				RenameMode::Other | RenameMode::Any => {
+					panic!("detected script modification of unknown kind")
+				},
 			},
 			EventKind::Modify(ModifyKind::Any) => {
 				let path = ev.paths[0].canonicalize().unwrap();
@@ -652,10 +709,7 @@ impl NoiseOutput {
 	}
 
 	pub fn rows(&mut self) -> impl '_ + Iterator<Item = (usize, &mut [f32])> {
-		self
-			.samples
-			.chunks_exact_mut(self.diameter)
-			.enumerate()
+		self.samples.chunks_exact_mut(self.diameter).enumerate()
 	}
 }
 
@@ -676,13 +730,15 @@ fn generate_noise(
 		requested = true;
 		break;
 	}
-	if !requested { return; }
+	if !requested {
+		return;
+	}
 	info!("noise gen requested");
 
 	for (ent, task) in existingRequests.iter() {
 		// FIXME: despawn should also cancel but would be nice to be explicit
 		// task.0.cancel();
- 		cmd.entity(ent).despawn();
+		cmd.entity(ent).despawn();
 	}
 
 	let code = {
@@ -726,15 +782,23 @@ fn update_noise_outputs(
 	mut images: ResMut<Assets<Image>>,
 	noiseImage: Res<NoiseImage>,
 ) {
-	let Ok((taskEnt, mut task)) = task.get_single_mut() else { return };
-	let Some(noiseOutput) = block_on(future::poll_once(&mut task.0)) else { return };
+	let Ok((taskEnt, mut task)) = task.get_single_mut() else {
+		return;
+	};
+	let Some(noiseOutput) = block_on(future::poll_once(&mut task.0)) else {
+		return;
+	};
 	cmd.entity(taskEnt).despawn();
 	info!("noise gen done");
 
 	let noiseImage = images.get_mut(&noiseImage.0).unwrap();
 	let diameter = noiseOutput.diameter as _;
 	if diameter != noiseImage.size().x {
-		noiseImage.resize(Extent3d { width: diameter, height: diameter, depth_or_array_layers: 1 });
+		noiseImage.resize(Extent3d {
+			width: diameter,
+			height: diameter,
+			depth_or_array_layers: 1,
+		});
 	}
 	let data: &mut [[f32; 4]] = bytemuck::cast_slice_mut(&mut noiseImage.data);
 	data.iter_mut().enumerate().for_each(|(i, pixel)| {
