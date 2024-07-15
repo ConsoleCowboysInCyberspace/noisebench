@@ -55,6 +55,8 @@ pub enum Noise {
     Rem(NoisePtr, NoisePtr),
 	RemEuclid(NoisePtr, NoisePtr),
     SignedPow(NoisePtr, NoisePtr),
+	Floor(NoisePtr),
+	Ceil(NoisePtr),
     Abs(NoisePtr),
     Min(NoisePtr, NoisePtr),
     Max(NoisePtr, NoisePtr),
@@ -98,6 +100,8 @@ impl Noise {
             Pow(l, r) => l.eval(pos).powf(r.eval(pos)),
             Rem(l, r) => l.eval(pos) % r.eval(pos),
             RemEuclid(l, r) => l.eval(pos).rem_euclid(r.eval(pos)),
+			Floor(v) => v.eval(pos).floor(),
+			Ceil(v) => v.eval(pos).ceil(),
             Abs(v) => v.eval(pos).abs(),
             Min(l, r) => l.eval(pos).min(r.eval(pos)),
             Max(l, r) => l.eval(pos).max(r.eval(pos)),
@@ -139,6 +143,8 @@ impl Clone for Noise {
             Rem(l, r) => Rem(l.clone(), r.clone()),
             RemEuclid(l, r) => RemEuclid(l.clone(), r.clone()),
             SignedPow(l, r) => SignedPow(l.clone(), r.clone()),
+			Floor(v) => Floor(v.clone()),
+			Ceil(v) => Ceil(v.clone()),
             Abs(v) => Abs(v.clone()),
             Min(l, r) => Min(l.clone(), r.clone()),
             Max(l, r) => Max(l.clone(), r.clone()),
@@ -215,6 +221,12 @@ impl UserData for Noise {
 		methods.add_method("remEuclid", |_, this, rhs: Value| {
 			let rhs = rhs_to_noise(&rhs)?;
             Ok(Noise::RemEuclid(this.clone().into(), rhs.into()))
+        });
+		methods.add_method("floor", |_, this, rhs: ()| {
+            Ok(Noise::Floor(this.clone().into()))
+        });
+		methods.add_method("ceil", |_, this, rhs: ()| {
+            Ok(Noise::Ceil(this.clone().into()))
         });
         methods.add_method("abs", |_, this, rhs: ()| {
             Ok(Noise::Abs(this.clone().into()))
