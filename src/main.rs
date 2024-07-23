@@ -3,6 +3,7 @@
 mod lua;
 
 use std::borrow::Borrow;
+use std::ffi::OsStr;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock, RwLock};
@@ -127,6 +128,7 @@ fn main() -> AppExit {
 		.watch(Path::new("assets/scripts"), RecursiveMode::Recursive)
 		.unwrap();
 	let mut scripts = HashMap::new();
+	let luaExtension = OsStr::new("lua");
 	for file in std::fs::read_dir("assets/scripts").unwrap() {
 		let file = file.unwrap();
 		let ty = file.file_type().unwrap();
@@ -135,6 +137,10 @@ fn main() -> AppExit {
 		}
 
 		let path = file.path();
+		if !matches!(path.extension(), Some(luaExtension)) {
+			continue;
+		}
+
 		let path = InternedPath::new(path);
 		let contents = std::fs::read_to_string(&path.path).unwrap();
 		scripts.insert(path, contents);
@@ -143,7 +149,7 @@ fn main() -> AppExit {
 		channel: receiver,
 		scripts,
 		selected: None,
-		height: 10.0,
+		height: 1.0,
 	});
 
 	app.run()
@@ -648,6 +654,11 @@ fn scripts_changed(
 		std::fs::read_to_string(path).unwrap()
 	}
 
+	fn is_lua_script(path: &Path) -> bool {
+		let extension = OsStr::new("lua");
+		matches!(path.extension(), Some(extension))
+	}
+
 	let UiState {
 		channel,
 		scripts,
@@ -658,11 +669,15 @@ fn scripts_changed(
 		match ev.kind {
 			EventKind::Create(CreateKind::File) => {
 				let path = &ev.paths[0];
-				scripts.insert(InternedPath::new(path.clone()), read_script(path));
+				if is_lua_script(path) {
+					scripts.insert(InternedPath::new(path.clone()), read_script(path));
+				}
 			},
 			EventKind::Remove(RemoveKind::File) => {
 				let path = &ev.paths[0];
-				scripts.remove(path);
+				if is_lua_script(path) {
+					scripts.remove(path);
+				}
 			},
 			EventKind::Modify(ModifyKind::Data(_)) => {
 				let path = ev.paths[0].canonicalize().unwrap();
@@ -678,11 +693,15 @@ fn scripts_changed(
 			EventKind::Modify(ModifyKind::Name(kind)) => match kind {
 				RenameMode::To => {
 					let path = &ev.paths[0];
-					scripts.insert(InternedPath::new(path.clone()), read_script(path));
+					if is_lua_script(path) {
+						scripts.insert(InternedPath::new(path.clone()), read_script(path));
+					}
 				},
 				RenameMode::From => {
 					let path = &ev.paths[0];
-					scripts.remove(path);
+					if is_lua_script(path) {
+						scripts.remove(path);
+					}
 				},
 				RenameMode::Both => {
 					let from = &ev.paths[0];
