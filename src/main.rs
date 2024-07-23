@@ -372,14 +372,13 @@ fn main_ui(
 						ui.selectable_value(selected, Some(path.clone()), &path.display);
 					}
 					if *selected != current {
-						noiseGenRequests.send(NoiseGenRequest);
+						noiseGenRequests.send(NoiseGenRequest::AlgorithmChanged);
 					}
 				});
 
 			let resp = ui.add(egui::DragValue::new(height).speed(0.1));
 			if resp.changed() {
-				// TODO: fire more specific model update event
-				noiseGenRequests.send(NoiseGenRequest);
+				noiseGenRequests.send(NoiseGenRequest::ModelParamsChanged);
 			}
 		});
 	});
@@ -576,8 +575,11 @@ fn camera_controller_3d(
 		speed * time.delta_seconds();
 }
 
-#[derive(Event)]
-struct NoiseGenRequest;
+#[derive(Clone, Copy, Event)]
+enum NoiseGenRequest {
+	AlgorithmChanged,
+	ModelParamsChanged,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct InternedPath(Arc<InternedPathInner>);
@@ -670,7 +672,7 @@ fn scripts_changed(
 					}
 				}
 				if selected.as_ref().map(Borrow::borrow) == Some(&path) {
-					noiseGenRequests.send(NoiseGenRequest);
+					noiseGenRequests.send(NoiseGenRequest::AlgorithmChanged);
 				}
 			},
 			EventKind::Modify(ModifyKind::Name(kind)) => match kind {
@@ -698,7 +700,7 @@ fn scripts_changed(
 					}
 				}
 				if selected.as_ref().map(Borrow::borrow) == Some(&path) {
-					noiseGenRequests.send(NoiseGenRequest);
+					noiseGenRequests.send(NoiseGenRequest::AlgorithmChanged);
 				}
 			},
 			_ => {},
@@ -706,6 +708,7 @@ fn scripts_changed(
 	}
 }
 
+#[derive(Resource)]
 struct NoiseOutput {
 	diameter: usize,
 	samples: Vec<f32>,
@@ -823,12 +826,13 @@ fn generate_noise(
 	mut noiseGenRequests: EventReader<NoiseGenRequest>,
 ) {
 	let mut requested = false;
-	for ev in noiseGenRequests.read() {
+	for &ev in noiseGenRequests.read() {
 		if requested {
 			panic!("multiple noise generation requests in one frame");
 		}
-		requested = true;
-		break;
+		if matches!(ev, NoiseGenRequest::AlgorithmChanged) {
+			requested = true;
+		}
 	}
 	if !requested {
 		return;
@@ -885,8 +889,24 @@ fn update_noise_outputs(
 	mut meshes: ResMut<Assets<Mesh>>,
 	uiState: Res<UiState>,
 	heightmaps: Res<Heightmaps>,
+	lastNoiseOutput: Option<Res<NoiseOutput>>,
+	mut noiseGenRequests: EventReader<NoiseGenRequest>,
 ) {
 	let Ok((taskEnt, mut task)) = task.get_single_mut() else {
+		let mut requested = false;
+		for &ev in noiseGenRequests.read() {
+			if requested {
+				panic!("multiple noise generation requests in one frame");
+			}
+			if matches!(ev, NoiseGenRequest::ModelParamsChanged) {
+				requested = true;
+			}
+		}
+		if !requested {
+			return;
+		}
+		let mesh = meshes.get_mut(&heightmaps.mesh).unwrap();
+		lastNoiseOutput.unwrap().update_mesh(mesh, uiState.height);
 		return;
 	};
 	let Some(noiseOutput) = block_on(future::poll_once(&mut task.0)) else {
@@ -899,4 +919,6 @@ fn update_noise_outputs(
 	noiseOutput.fill_image(image);
 	let mesh = meshes.get_mut(&heightmaps.mesh).unwrap();
 	noiseOutput.update_mesh(mesh, uiState.height);
+
+	cmd.insert_resource(noiseOutput);
 }
