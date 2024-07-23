@@ -233,11 +233,14 @@ fn setup(
 	let image = images.add(noiseImage);
 	let mesh = meshes.add({
 		let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::all());
-		mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, vec![
-			Vec3::ZERO,
-			Vec3::Z,
-			Vec3::X,
-		]);
+		mesh.insert_attribute(
+			Mesh::ATTRIBUTE_POSITION,
+			vec![
+				Vec3::ZERO,
+				Vec3::Z,
+				Vec3::X,
+			],
+		);
 		mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, vec![Vec3::Y; 3]);
 		mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, vec![Vec2::ZERO; 3]);
 		mesh.generate_tangents().unwrap();
@@ -299,11 +302,14 @@ fn setup(
 		base_color_texture: Some(assets.load("test.png")),
 		..default()
 	});
-	cmd.spawn((NoFrustumCulling, PbrBundle {
-		mesh,
-		material,
-		..default()
-	}));
+	cmd.spawn((
+		NoFrustumCulling,
+		PbrBundle {
+			mesh,
+			material,
+			..default()
+		},
+	));
 
 	// water
 	let mesh = meshes.add(Rectangle::new(2f32.powi(14), 2f32.powi(14)));
@@ -365,7 +371,11 @@ fn main_ui(
 			ui.selectable_value(&mut selectedTab.0, Tab::D3, "3D");
 
 			let UiState {
-				scripts, selected, diameter, height, ..
+				scripts,
+				selected,
+				diameter,
+				height,
+				..
 			} = &mut *uiState;
 
 			ui.add_space(25.0);
@@ -754,10 +764,7 @@ impl NoiseOutput {
 	}
 
 	pub fn rows(&mut self) -> impl '_ + Iterator<Item = (usize, &mut [f32])> {
-		self
-			.samples
-			.chunks_exact_mut(self.diameter)
-			.enumerate()
+		self.samples.chunks_exact_mut(self.diameter).enumerate()
 	}
 
 	pub fn fill_image(&self, image: &mut Image) {
@@ -783,9 +790,7 @@ impl NoiseOutput {
 		let mut normals = vec![];
 		let mut uvs = vec![];
 
-		let get_height = |x: usize, y: usize| {
-			self.samples[y * self.diameter + x] * height
-		};
+		let get_height = |x: usize, y: usize| self.samples[y * self.diameter + x] * height;
 
 		for y in 0 .. self.diameter - 1 {
 			for x in 0 .. self.diameter - 1 {
@@ -793,7 +798,6 @@ impl NoiseOutput {
 					(0, 0),
 					(0, 1),
 					(1, 0),
-
 					(1, 0),
 					(0, 1),
 					(1, 1),
@@ -832,7 +836,8 @@ impl NoiseOutput {
 					let northeast = east.cross(north);
 					let southeast = south.cross(east);
 					let southwest = west.cross(south);
-					let normal = ((northwest + northeast + southeast + southwest) / 4.0).normalize();
+					let normal =
+						((northwest + northeast + southeast + southwest) / 4.0).normalize();
 
 					positions.push(position);
 					normals.push(normal);

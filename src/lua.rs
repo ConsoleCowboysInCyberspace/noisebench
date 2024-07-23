@@ -185,14 +185,17 @@ impl UserData for NoiseCtors {
 		methods.add_function("const", |lua, val: f32| Ok(Noise::Const(val)));
 		methods.add_function("simplex", |lua, seed: i64| Ok(Noise::Simplex(seed)));
 		methods.add_function("simplexFast", |lua, seed: i64| Ok(Noise::SimplexFast(seed)));
-		methods.add_function("sinefield", |lua, (freq, amp): (Option<f64>, Option<f64>)| {
-			let freq = freq.unwrap_or(1.0);
-			let amp = amp.unwrap_or(1.0);
-			Ok(Noise::Func(Box::new(move |mut pos: DVec2| {
-				pos = pos * 2.0 * std::f64::consts::PI * freq;
-				((pos.x.sin() + pos.y.cos()) * amp) as f32
-			})))
-		})
+		methods.add_function(
+			"sinefield",
+			|lua, (freq, amp): (Option<f64>, Option<f64>)| {
+				let freq = freq.unwrap_or(1.0);
+				let amp = amp.unwrap_or(1.0);
+				Ok(Noise::Func(Box::new(move |mut pos: DVec2| {
+					pos = pos * 2.0 * std::f64::consts::PI * freq;
+					((pos.x.sin() + pos.y.cos()) * amp) as f32
+				})))
+			},
+		)
 	}
 }
 
