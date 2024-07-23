@@ -149,6 +149,7 @@ fn main() -> AppExit {
 		channel: receiver,
 		scripts,
 		selected: None,
+		diameter: 256,
 		height: 1.0,
 	});
 
@@ -203,6 +204,7 @@ struct UiState {
 	channel: Receiver<notify::Event>,
 	scripts: HashMap<InternedPath, String>,
 	selected: Option<InternedPath>,
+	diameter: usize,
 	height: f32,
 }
 
@@ -362,11 +364,12 @@ fn main_ui(
 			ui.selectable_value(&mut selectedTab.0, Tab::D2, "2D");
 			ui.selectable_value(&mut selectedTab.0, Tab::D3, "3D");
 
-			ui.add_space(50.0);
-
 			let UiState {
-				scripts, selected, height, ..
+				scripts, selected, diameter, height, ..
 			} = &mut *uiState;
+
+			ui.add_space(25.0);
+			ui.label("Script");
 			egui::ComboBox::from_id_source("script")
 				.selected_text(match selected {
 					None => "",
@@ -382,6 +385,15 @@ fn main_ui(
 					}
 				});
 
+			ui.add_space(10.0);
+			ui.label("Diameter");
+			let resp = ui.add(egui::DragValue::new(diameter).range(16 ..= 4096));
+			if resp.changed() {
+				noiseGenRequests.send(NoiseGenRequest::AlgorithmChanged);
+			}
+
+			ui.add_space(10.0);
+			ui.label("Mesh height");
 			let resp = ui.add(egui::DragValue::new(height).speed(0.1));
 			if resp.changed() {
 				noiseGenRequests.send(NoiseGenRequest::ModelParamsChanged);
@@ -864,6 +876,7 @@ fn generate_noise(
 		cmd.entity(ent).despawn();
 	}
 
+	let diameter = uiState.diameter;
 	let code = {
 		let selected = uiState.selected.as_ref().unwrap();
 		uiState.scripts.get(selected).unwrap().clone()
@@ -871,7 +884,7 @@ fn generate_noise(
 
 	let threadPool = AsyncComputeTaskPool::get();
 	let task = threadPool.spawn(async move {
-		let mut img = NoiseOutput::new(32);
+		let mut img = NoiseOutput::new(diameter);
 
 		let ast = match lua::construct_noisegen(&code) {
 			Ok(ast) => ast,
@@ -934,6 +947,7 @@ fn update_noise_outputs(
 	cmd.entity(taskEnt).despawn();
 	info!("noise gen done");
 
+	// TODO: this should probably happen in a background thread
 	let image = images.get_mut(&heightmaps.image).unwrap();
 	noiseOutput.fill_image(image);
 	let mesh = meshes.get_mut(&heightmaps.mesh).unwrap();
