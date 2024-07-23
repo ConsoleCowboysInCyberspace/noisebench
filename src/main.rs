@@ -14,7 +14,7 @@ use bevy::asset::{AssetLoader, AsyncReadExt, LoadedFolder};
 use bevy::color::palettes::css;
 use bevy::core_pipeline::Skybox;
 use bevy::input::mouse::{MouseMotion, MouseWheel};
-use bevy::math::{dvec2, vec2, vec3};
+use bevy::math::{dvec2, vec2, vec3, DVec2};
 use bevy::pbr::DirectionalLightShadowMap;
 use bevy::prelude::*;
 use bevy::render::camera::RenderTarget;
@@ -30,6 +30,7 @@ use bevy::render::render_resource::{
 	TextureViewDimension,
 };
 use bevy::render::texture::BevyDefault;
+use bevy::render::view::NoFrustumCulling;
 use bevy::tasks::futures_lite::future;
 use bevy::tasks::{block_on, AsyncComputeTaskPool, Task};
 use bevy::utils::{HashMap, HashSet};
@@ -69,7 +70,6 @@ fn main() -> AppExit {
 			close_on_esc,
 			axes_gizmo,
 			setup_cubemap,
-			wef,
 			main_ui,
 			camera_controller_2d,
 			camera_controller_3d,
@@ -139,10 +139,11 @@ fn main() -> AppExit {
 		let contents = std::fs::read_to_string(&path.path).unwrap();
 		scripts.insert(path, contents);
 	}
-	app.insert_resource(LuaScripts {
+	app.insert_resource(UiState {
 		channel: receiver,
 		scripts,
 		selected: None,
+		height: 10.0,
 	});
 
 	app.run()
@@ -186,13 +187,17 @@ struct Viewport3D {
 }
 
 #[derive(Resource)]
-struct NoiseImage(Handle<Image>);
+struct Heightmaps {
+	image: Handle<Image>,
+	mesh: Handle<Mesh>,
+}
 
 #[derive(Resource)]
-struct LuaScripts {
+struct UiState {
 	channel: Receiver<notify::Event>,
 	scripts: HashMap<InternedPath, String>,
 	selected: Option<InternedPath>,
+	height: f32,
 }
 
 fn setup(
@@ -217,8 +222,23 @@ fn setup(
 		TextureFormat::Rgba32Float,
 		default(),
 	);
-	let noiseImage = images.add(noiseImage);
-	cmd.insert_resource(NoiseImage(noiseImage.clone()));
+	let image = images.add(noiseImage);
+	let mesh = meshes.add({
+		let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::all());
+		mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, vec![
+			Vec3::ZERO,
+			Vec3::Z,
+			Vec3::X,
+		]);
+		mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, vec![Vec3::Y; 3]);
+		mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, vec![Vec2::ZERO; 3]);
+		mesh.generate_tangents().unwrap();
+		mesh
+	});
+	cmd.insert_resource(Heightmaps {
+		image: image.clone(),
+		mesh: mesh.clone(),
+	});
 
 	let camera2d = cmd
 		.spawn(Camera2dBundle {
@@ -232,7 +252,7 @@ fn setup(
 	cmd.spawn((
 		TargetCamera(camera2d),
 		SpriteBundle {
-			texture: noiseImage,
+			texture: image,
 			..default()
 		},
 	));
@@ -267,20 +287,15 @@ fn setup(
 	});
 	cmd.insert_resource(DirectionalLightShadowMap { size: 8192 });
 
-	let mesh = meshes.add(Cuboid::from_size(Vec3::ONE));
 	let material = materials.add(StandardMaterial {
 		base_color_texture: Some(assets.load("test.png")),
 		..default()
 	});
-	cmd.spawn((
-		DbgCube,
-		PbrBundle {
-			mesh,
-			material,
-			transform: Transform::from_xyz(0.0, 0.5, 0.0),
-			..default()
-		},
-	));
+	cmd.spawn((NoFrustumCulling, PbrBundle {
+		mesh,
+		material,
+		..default()
+	}));
 
 	// water
 	let mesh = meshes.add(Rectangle::new(2f32.powi(14), 2f32.powi(14)));
@@ -292,7 +307,7 @@ fn setup(
 	cmd.spawn(PbrBundle {
 		mesh,
 		material,
-		transform: Transform::from_xyz(0.0, 0.5, 0.0).looking_to(Vec3::NEG_Y, Vec3::Z),
+		transform: Transform::IDENTITY.looking_to(Vec3::NEG_Y, Vec3::Z),
 		..default()
 	});
 
@@ -325,16 +340,6 @@ fn setup_cubemap(
 	*done = true;
 }
 
-#[derive(Component)]
-struct DbgCube;
-
-fn wef(mut query: Query<&mut Transform, With<DbgCube>>, time: Res<Time>) {
-	let mut t = query.single_mut();
-	let (x, y) = time.elapsed_seconds().sin_cos();
-	let pos = vec3(x, 0.5, y);
-	t.look_at(pos, Vec3::Y);
-}
-
 fn main_ui(
 	mut eguiCtx: EguiContexts,
 	mut selectedTab: ResMut<SelectedTab>,
@@ -342,7 +347,7 @@ fn main_ui(
 	viewport2d: Res<Viewport2D>,
 	viewport3d: Res<Viewport3D>,
 	images: Res<Assets<Image>>,
-	mut luaScripts: ResMut<LuaScripts>,
+	mut uiState: ResMut<UiState>,
 	mut noiseGenRequests: EventWriter<NoiseGenRequest>,
 ) {
 	let eguiCtx = eguiCtx.ctx_mut();
@@ -353,9 +358,9 @@ fn main_ui(
 
 			ui.add_space(50.0);
 
-			let LuaScripts {
-				scripts, selected, ..
-			} = &mut *luaScripts;
+			let UiState {
+				scripts, selected, height, ..
+			} = &mut *uiState;
 			egui::ComboBox::from_id_source("script")
 				.selected_text(match selected {
 					None => "",
@@ -370,6 +375,12 @@ fn main_ui(
 						noiseGenRequests.send(NoiseGenRequest);
 					}
 				});
+
+			let resp = ui.add(egui::DragValue::new(height).speed(0.1));
+			if resp.changed() {
+				// TODO: fire more specific model update event
+				noiseGenRequests.send(NoiseGenRequest);
+			}
 		});
 	});
 	egui::CentralPanel::default().show(eguiCtx, |ui| {
@@ -628,18 +639,19 @@ impl Borrow<PathBuf> for InternedPath {
 }
 
 fn scripts_changed(
-	mut luaScripts: ResMut<LuaScripts>,
+	mut uiState: ResMut<UiState>,
 	mut noiseGenRequests: EventWriter<NoiseGenRequest>,
 ) {
 	fn read_script(path: &Path) -> String {
 		std::fs::read_to_string(path).unwrap()
 	}
 
-	let LuaScripts {
+	let UiState {
 		channel,
 		scripts,
 		selected,
-	} = &mut *luaScripts;
+		..
+	} = &mut *uiState;
 	while let Ok(ev) = channel.recv_timeout(Duration::ZERO) {
 		match ev.kind {
 			EventKind::Create(CreateKind::File) => {
@@ -708,7 +720,96 @@ impl NoiseOutput {
 	}
 
 	pub fn rows(&mut self) -> impl '_ + Iterator<Item = (usize, &mut [f32])> {
-		self.samples.chunks_exact_mut(self.diameter).enumerate()
+		self
+			.samples
+			.chunks_exact_mut(self.diameter)
+			.enumerate()
+	}
+
+	pub fn fill_image(&self, image: &mut Image) {
+		let diameter = self.diameter as _;
+		if diameter != image.size().x {
+			image.resize(Extent3d {
+				width: diameter,
+				height: diameter,
+				depth_or_array_layers: 1,
+			});
+		}
+		let data: &mut [[f32; 4]] = bytemuck::cast_slice_mut(&mut image.data);
+		data.iter_mut().enumerate().for_each(|(i, pixel)| {
+			let v = self.samples[i];
+			let v = (v + 1.0) / 2.0;
+			(&mut pixel[.. 3]).fill(v);
+			pixel[3] = 1.0;
+		});
+	}
+
+	pub fn update_mesh(&self, mesh: &mut Mesh, height: f32) {
+		let mut positions = vec![];
+		let mut normals = vec![];
+		let mut uvs = vec![];
+
+		let get_height = |x: usize, y: usize| {
+			self.samples[y * self.diameter + x] * height
+		};
+
+		for y in 0 .. self.diameter - 1 {
+			for x in 0 .. self.diameter - 1 {
+				for (dx, dy) in [
+					(0, 0),
+					(0, 1),
+					(1, 0),
+
+					(1, 0),
+					(0, 1),
+					(1, 1),
+				] {
+					let x = x + dx;
+					let y = y + dy;
+					let height = get_height(x, y);
+					let position = vec3(x as f32, height, y as f32);
+
+					let north = {
+						let y = if y == 0 { y } else { y - 1 };
+						let height = get_height(x, y);
+						vec3(x as f32, height, y as f32)
+					};
+					let north = position - north;
+					let east = {
+						let x = if x == self.diameter - 1 { x } else { x + 1 };
+						let height = get_height(x, y);
+						vec3(x as f32, height, y as f32)
+					};
+					let east = position - east;
+					let south = {
+						let y = if y == self.diameter - 1 { y } else { y + 1 };
+						let height = get_height(x, y);
+						vec3(x as f32, height, y as f32)
+					};
+					let south = position - south;
+					let west = {
+						let x = if x == 0 { x } else { x - 1 };
+						let height = get_height(x, y);
+						vec3(x as f32, height, y as f32)
+					};
+					let west = position - west;
+
+					let northwest = north.cross(west);
+					let northeast = east.cross(north);
+					let southeast = south.cross(east);
+					let southwest = west.cross(south);
+					let normal = ((northwest + northeast + southeast + southwest) / 4.0).normalize();
+
+					positions.push(position);
+					normals.push(normal);
+					uvs.push(vec2(dx as _, dy as _));
+				}
+			}
+		}
+		mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+		mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+		mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+		mesh.generate_tangents().unwrap();
 	}
 }
 
@@ -718,7 +819,7 @@ struct NoiseGenTask(Task<NoiseOutput>);
 fn generate_noise(
 	mut cmd: Commands,
 	existingRequests: Query<(Entity, &NoiseGenTask)>,
-	luaScripts: Res<LuaScripts>,
+	uiState: Res<UiState>,
 	mut noiseGenRequests: EventReader<NoiseGenRequest>,
 ) {
 	let mut requested = false;
@@ -741,13 +842,13 @@ fn generate_noise(
 	}
 
 	let code = {
-		let selected = luaScripts.selected.as_ref().unwrap();
-		luaScripts.scripts.get(selected).unwrap().clone()
+		let selected = uiState.selected.as_ref().unwrap();
+		uiState.scripts.get(selected).unwrap().clone()
 	};
 
 	let threadPool = AsyncComputeTaskPool::get();
 	let task = threadPool.spawn(async move {
-		let mut img = NoiseOutput::new(256);
+		let mut img = NoiseOutput::new(32);
 
 		let ast = match lua::construct_noisegen(&code) {
 			Ok(ast) => ast,
@@ -760,13 +861,14 @@ fn generate_noise(
 
 		let diameter = img.diameter;
 		threadPool.scope(|scope| {
-			img.rows().for_each(|(y, chunk)| {
+			img.rows().for_each(|(y, heights)| {
 				let ast = ast.clone();
 				scope.spawn(async move {
-					for (x, v) in chunk.into_iter().enumerate() {
+					for (x, height) in heights.into_iter().enumerate() {
 						let y = y as f64 / (diameter - 1) as f64;
 						let x = x as f64 / (diameter - 1) as f64;
-						*v = ast.eval(dvec2(x, y));
+						let pos = dvec2(x, y);
+						*height = ast.eval(pos);
 					}
 				});
 			});
@@ -780,7 +882,9 @@ fn update_noise_outputs(
 	mut cmd: Commands,
 	mut task: Query<(Entity, &mut NoiseGenTask)>,
 	mut images: ResMut<Assets<Image>>,
-	noiseImage: Res<NoiseImage>,
+	mut meshes: ResMut<Assets<Mesh>>,
+	uiState: Res<UiState>,
+	heightmaps: Res<Heightmaps>,
 ) {
 	let Ok((taskEnt, mut task)) = task.get_single_mut() else {
 		return;
@@ -791,20 +895,8 @@ fn update_noise_outputs(
 	cmd.entity(taskEnt).despawn();
 	info!("noise gen done");
 
-	let noiseImage = images.get_mut(&noiseImage.0).unwrap();
-	let diameter = noiseOutput.diameter as _;
-	if diameter != noiseImage.size().x {
-		noiseImage.resize(Extent3d {
-			width: diameter,
-			height: diameter,
-			depth_or_array_layers: 1,
-		});
-	}
-	let data: &mut [[f32; 4]] = bytemuck::cast_slice_mut(&mut noiseImage.data);
-	data.iter_mut().enumerate().for_each(|(i, pixel)| {
-		let v = noiseOutput.samples[i];
-		let v = (v + 1.0) / 2.0;
-		(&mut pixel[.. 3]).fill(v);
-		pixel[3] = 1.0;
-	});
+	let image = images.get_mut(&heightmaps.image).unwrap();
+	noiseOutput.fill_image(image);
+	let mesh = meshes.get_mut(&heightmaps.mesh).unwrap();
+	noiseOutput.update_mesh(mesh, uiState.height);
 }
