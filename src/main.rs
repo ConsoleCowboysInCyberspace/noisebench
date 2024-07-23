@@ -299,7 +299,8 @@ fn setup(
 	cmd.insert_resource(DirectionalLightShadowMap { size: 8192 });
 
 	let material = materials.add(StandardMaterial {
-		base_color_texture: Some(assets.load("test.png")),
+		base_color_texture: Some(assets.load("ground_texture/albedo.jpg")),
+		normal_map_texture: Some(assets.load("ground_texture/normal.jpg")),
 		..default()
 	});
 	cmd.spawn((
